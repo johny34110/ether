@@ -56,20 +56,20 @@ export default function Defenses({ activeDefenseId, setActiveDefenseId }) {
   const [characters, setCharacters] = useState([]);
   const [defenses, setDefenses] = useState([]);
 
-  // existing filter + sort
+  // filters
   const [filterText, setFilterText] = useState("");
   const [sort, setSort] = useState("wins_desc");
 
-  // NEW: filter by 2–3 characters (orderless)
+  // NEW: 2–3 character filter (orderless)
   const [f1, setF1] = useState(null);
   const [f2, setF2] = useState(null);
   const [f3, setF3] = useState(null);
 
-  // editor selection
+  // selected defense in editor
   const [selected, setSelected] = useState(null);
   const [busy, setBusy] = useState(false);
 
-  // editor state (defense creation)
+  // editor fields
   const [d1, setD1] = useState(null);
   const [d2, setD2] = useState(null);
   const [d3, setD3] = useState(null);
@@ -96,11 +96,10 @@ export default function Defenses({ activeDefenseId, setActiveDefenseId }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // --- ✅ FILTERED (text + 2-3 chars, no order) ---
+  // ✅ filtered: text + multi-person (no order) + sort
   const filtered = useMemo(() => {
     let rows = defenses;
 
-    // text filter (startsWith on any character name)
     const t = filterText.trim().toLowerCase();
     if (t) {
       rows = rows.filter((d) => {
@@ -111,7 +110,6 @@ export default function Defenses({ activeDefenseId, setActiveDefenseId }) {
       });
     }
 
-    // multi-person filter (2-3 picks), orderless
     const wanted = [f1, f2, f3].filter(Boolean);
     if (wanted.length) {
       rows = rows.filter((d) => {
@@ -120,7 +118,6 @@ export default function Defenses({ activeDefenseId, setActiveDefenseId }) {
       });
     }
 
-    // sort
     if (sort === "wins_desc") rows = [...rows].sort((a, b) => (b.wins ?? 0) - (a.wins ?? 0));
     if (sort === "wins_asc") rows = [...rows].sort((a, b) => (a.wins ?? 0) - (b.wins ?? 0));
     if (sort === "name_asc")
@@ -172,7 +169,6 @@ export default function Defenses({ activeDefenseId, setActiveDefenseId }) {
 
     setBusy(true);
     try {
-      // orderless key => no duplicates even if user changes positions
       const defense_key = teamKeyFromIds([d1, d2, d3]);
 
       const payload = {
@@ -190,14 +186,11 @@ export default function Defenses({ activeDefenseId, setActiveDefenseId }) {
       const { error } = await supabase.from("defenses").upsert(payload, { onConflict: "defense_key" });
       if (error) return alert(error.message);
 
-      // refresh + reselect
       const ds = await loadDefenses();
       setDefenses(ds);
+
       const re = ds.find((x) => x.defense_key === defense_key) || null;
       if (re) loadIntoEditor(re);
-
-      // optionally: when saving, auto-set search filters to same 3 chars (nice UX)
-      // setF1(d1); setF2(d2); setF3(d3);
     } catch (e) {
       alert(e.message);
     } finally {
@@ -205,18 +198,18 @@ export default function Defenses({ activeDefenseId, setActiveDefenseId }) {
     }
   }
 
-  async function deleteSelectedDefense() {
-    if (!selected) return;
-    const label = `${selected.d1?.name} / ${selected.d2?.name} / ${selected.d3?.name}`;
+  async function deleteDefense(def) {
+    const label = `${def.d1?.name} / ${def.d2?.name} / ${def.d3?.name}`;
     if (!confirm(`Supprimer cette défense ?\n\n${label}\n\n(Les offenses liées seront supprimées aussi)`)) return;
 
     setBusy(true);
     try {
-      const { error } = await supabase.from("defenses").delete().eq("id", selected.id);
+      const { error } = await supabase.from("defenses").delete().eq("id", def.id);
       if (error) return alert(error.message);
 
-      if (activeDefenseId === selected.id) setActiveDefenseId(null);
-      clearEditor();
+      if (activeDefenseId === def.id) setActiveDefenseId(null);
+      if (selected?.id === def.id) clearEditor();
+
       await refreshAll({ keepSelection: false });
     } catch (e) {
       alert(e.message);
@@ -225,18 +218,15 @@ export default function Defenses({ activeDefenseId, setActiveDefenseId }) {
     }
   }
 
-  async function incSelectedDefenseWin() {
-    if (!selected) return;
-
+  async function incDefenseWin(def) {
     setBusy(true);
     try {
-      const current = Number(selected.wins || 0);
-      const next = current + 1;
-
-      const { error } = await supabase.from("defenses").update({ wins: next }).eq("id", selected.id);
+      const next = Number(def.wins || 0) + 1;
+      const { error } = await supabase.from("defenses").update({ wins: next }).eq("id", def.id);
       if (error) return alert(error.message);
 
-      setWins(next);
+      // update editor if it’s the same defense
+      if (selected?.id === def.id) setWins(next);
       await refreshAll();
     } catch (e) {
       alert(e.message);
@@ -251,9 +241,9 @@ export default function Defenses({ activeDefenseId, setActiveDefenseId }) {
       <div style={{ display: "grid", gap: 12 }}>
         <UploadCharacters onDone={() => refreshAll().catch((e) => alert(e.message))} />
 
-        {/* ✅ NEW: multi-person search UI */}
-        <div style={{ padding: 12, border: "1px solid #ddd", borderRadius: 16, background: "#fff" }}>
-          <div style={{ fontWeight: 900, marginBottom: 10 }}>Recherche défense (2–3 persos, sans ordre)</div>
+        {/* Multi-person search */}
+        <div style={{ padding: 12, border: "1px solid #ddd", borderRadius: 16, background: "white" }}>
+          <div style={{ fontWeight: 900, marginBottom: 10 }}>Recherche défense (2–3 persos)</div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
             <CharacterAutocomplete label="Perso A" valueId={f1} onChangeId={setF1} characters={characters} />
             <CharacterAutocomplete label="Perso B" valueId={f2} onChangeId={setF2} characters={characters} />
@@ -264,10 +254,8 @@ export default function Defenses({ activeDefenseId, setActiveDefenseId }) {
             <button onClick={resetSearch} style={{ padding: "8px 10px", borderRadius: 12 }}>
               Réinitialiser
             </button>
-
-            {/* petit hint */}
             <div style={{ opacity: 0.7, fontSize: 12, alignSelf: "center" }}>
-              Astuce : sélectionne 2 persos → tu vois toutes les défenses qui les contiennent.
+              Sélectionne 2 persos → toutes les défenses qui les contiennent.
             </div>
           </div>
         </div>
@@ -288,41 +276,21 @@ export default function Defenses({ activeDefenseId, setActiveDefenseId }) {
           </select>
         </div>
 
-        {/* List */}
+        {/* List: UI handled inside DefenseCard */}
         <div style={{ display: "grid", gap: 10, maxHeight: "64vh", overflow: "auto" }}>
           {filtered.map((d) => (
-            <div key={d.id} style={{ display: "grid", gap: 8 }}>
-              <DefenseCard defense={d} onSelect={loadIntoEditor} />
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <button
-                  onClick={() => {
-                    loadIntoEditor(d);
-                    setActiveDefenseId(d.id);
-                  }}
-                  style={{ padding: "8px 10px", borderRadius: 12 }}
-                >
-                  ✅ Active
-                </button>
-                <button
-                  onClick={() => {
-                    loadIntoEditor(d);
-                    setTimeout(() => incSelectedDefenseWin(), 0);
-                  }}
-                  style={{ padding: "8px 10px", borderRadius: 12 }}
-                >
-                  +1
-                </button>
-                <button
-                  onClick={() => {
-                    loadIntoEditor(d);
-                    setTimeout(() => deleteSelectedDefense(), 0);
-                  }}
-                  style={{ padding: "8px 10px", borderRadius: 12 }}
-                >
-                  🗑️
-                </button>
-              </div>
-            </div>
+            <DefenseCard
+              key={d.id}
+              defense={d}
+              isActive={activeDefenseId === d.id}
+              onSelect={loadIntoEditor}
+              onSetActive={(def) => {
+                loadIntoEditor(def);
+                setActiveDefenseId(def.id);
+              }}
+              onIncWin={(def) => incDefenseWin(def)}
+              onDelete={(def) => deleteDefense(def)}
+            />
           ))}
 
           {!filtered.length ? (
@@ -341,7 +309,6 @@ export default function Defenses({ activeDefenseId, setActiveDefenseId }) {
             <button onClick={clearEditor} style={{ padding: "10px 12px", borderRadius: 12 }} disabled={busy}>
               Nouvelle
             </button>
-
             <button
               disabled={!selected || busy}
               onClick={() => selected && setActiveDefenseId(selected.id)}
@@ -349,64 +316,27 @@ export default function Defenses({ activeDefenseId, setActiveDefenseId }) {
             >
               Définir active
             </button>
-
-            <button
-              disabled={!selected || busy}
-              onClick={incSelectedDefenseWin}
-              style={{ padding: "10px 12px", borderRadius: 12 }}
-            >
-              +1 victoire
-            </button>
-
-            <button
-              disabled={!selected || busy}
-              onClick={deleteSelectedDefense}
-              style={{ padding: "10px 12px", borderRadius: 12 }}
-            >
-              🗑️ Supprimer
-            </button>
           </div>
         </div>
 
-        {/* Editor */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginTop: 12 }}>
           <div>
             <CharacterAutocomplete label="Perso 1" valueId={d1} onChangeId={setD1} characters={characters} />
-            <input
-              value={d1n}
-              onChange={(e) => setD1n(e.target.value)}
-              placeholder="Note perso 1"
-              style={{ width: "100%", marginTop: 8, padding: 8, borderRadius: 10 }}
-            />
+            <input value={d1n} onChange={(e) => setD1n(e.target.value)} placeholder="Note perso 1" style={{ width: "100%", marginTop: 8, padding: 8, borderRadius: 10 }} />
           </div>
           <div>
             <CharacterAutocomplete label="Perso 2" valueId={d2} onChangeId={setD2} characters={characters} />
-            <input
-              value={d2n}
-              onChange={(e) => setD2n(e.target.value)}
-              placeholder="Note perso 2"
-              style={{ width: "100%", marginTop: 8, padding: 8, borderRadius: 10 }}
-            />
+            <input value={d2n} onChange={(e) => setD2n(e.target.value)} placeholder="Note perso 2" style={{ width: "100%", marginTop: 8, padding: 8, borderRadius: 10 }} />
           </div>
           <div>
             <CharacterAutocomplete label="Perso 3" valueId={d3} onChangeId={setD3} characters={characters} />
-            <input
-              value={d3n}
-              onChange={(e) => setD3n(e.target.value)}
-              placeholder="Note perso 3"
-              style={{ width: "100%", marginTop: 8, padding: 8, borderRadius: 10 }}
-            />
+            <input value={d3n} onChange={(e) => setD3n(e.target.value)} placeholder="Note perso 3" style={{ width: "100%", marginTop: 8, padding: 8, borderRadius: 10 }} />
           </div>
         </div>
 
-        <div style={{ display: "flex", gap: 12, marginTop: 12, alignItems: "center", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 12, marginTop: 12, alignItems: "center" }}>
           <div style={{ fontWeight: 700 }}>Victoires défense</div>
-          <input
-            type="number"
-            value={wins}
-            onChange={(e) => setWins(e.target.value)}
-            style={{ width: 140, padding: 8, borderRadius: 10 }}
-          />
+          <input type="number" value={wins} onChange={(e) => setWins(e.target.value)} style={{ width: 140, padding: 8, borderRadius: 10 }} />
         </div>
 
         <div style={{ marginTop: 12 }}>
@@ -414,7 +344,7 @@ export default function Defenses({ activeDefenseId, setActiveDefenseId }) {
           <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={4} style={{ width: "100%", padding: 10, borderRadius: 12 }} />
         </div>
 
-        <div style={{ marginTop: 12, display: "flex", gap: 10 }}>
+        <div style={{ marginTop: 12 }}>
           <button onClick={saveDefense} disabled={busy} style={{ padding: "12px 14px", borderRadius: 12, fontWeight: 800 }}>
             {busy ? "..." : "Sauvegarder"}
           </button>
@@ -428,9 +358,7 @@ export default function Defenses({ activeDefenseId, setActiveDefenseId }) {
             </b>
             {activeDefenseId === selected.id ? <span> · (active)</span> : null}
           </div>
-        ) : (
-          <div style={{ marginTop: 12, opacity: 0.75 }}>Sélectionne une défense à gauche, ou crée-en une nouvelle.</div>
-        )}
+        ) : null}
       </div>
     </div>
   );
