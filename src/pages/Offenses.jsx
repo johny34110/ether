@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { teamKeyFromIds } from "../lib/keys";
-import CharacterPicker from "../ui/CharacterPicker";
+import CharacterAutocomplete from "../ui/CharacterAutocomplete";
 
 async function loadCharacters() {
   const { data, error } = await supabase.from("characters").select("*").order("name");
@@ -153,6 +153,7 @@ export default function Offenses({ activeDefenseId, setActiveDefenseId }) {
   async function saveCounter() {
     if (!activeDefenseId) return alert("Sélectionne une défense.");
     if (!a1 || !a2 || !a3) return alert("Choisis 3 persos.");
+    if (a1 === a2 || a1 === a3 || a2 === a3) return alert("3 persos différents 🙂");
 
     setBusy(true);
     try {
@@ -205,12 +206,12 @@ export default function Offenses({ activeDefenseId, setActiveDefenseId }) {
   async function incCounterWin(counterId) {
     setBusy(true);
     try {
-      const { data, error } = await supabase.from("counters").select("wins").eq("id", counterId).single();
-      if (error) return alert(error.message);
+      const row = counters.find((x) => x.id === counterId);
+      const current = Number(row?.wins || 0);
+      const next = current + 1;
 
-      const next = Number(data?.wins || 0) + 1;
-      const { error: upErr } = await supabase.from("counters").update({ wins: next }).eq("id", counterId);
-      if (upErr) return alert(upErr.message);
+      const { error } = await supabase.from("counters").update({ wins: next }).eq("id", counterId);
+      if (error) return alert(error.message);
 
       await refreshCounters();
     } catch (e) {
@@ -279,11 +280,7 @@ export default function Offenses({ activeDefenseId, setActiveDefenseId }) {
                   style={{ width: 56, height: 56, borderRadius: 14, overflow: "hidden", background: "#eee" }}
                 >
                   {p.image_url ? (
-                    <img
-                      src={p.image_url}
-                      alt={p.name}
-                      style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                    />
+                    <img src={p.image_url} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                   ) : null}
                 </div>
               ))}
@@ -315,21 +312,9 @@ export default function Offenses({ activeDefenseId, setActiveDefenseId }) {
                       <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
                         {[c.a1, c.a2, c.a3].map((p) => (
                           <div key={p.id} style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                            <div
-                              style={{
-                                width: 34,
-                                height: 34,
-                                borderRadius: 10,
-                                overflow: "hidden",
-                                background: "#f2f2f2",
-                              }}
-                            >
+                            <div style={{ width: 34, height: 34, borderRadius: 10, overflow: "hidden", background: "#f2f2f2" }}>
                               {p.image_url ? (
-                                <img
-                                  src={p.image_url}
-                                  alt={p.name}
-                                  style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                                />
+                                <img src={p.image_url} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                               ) : null}
                             </div>
                             <div style={{ fontWeight: 700, fontSize: 13 }}>{p.name}</div>
@@ -339,18 +324,10 @@ export default function Offenses({ activeDefenseId, setActiveDefenseId }) {
 
                       <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
                         <div style={{ fontWeight: 800 }}>{c.wins}</div>
-                        <button
-                          onClick={() => incCounterWin(c.id)}
-                          disabled={busy}
-                          style={{ padding: "8px 10px", borderRadius: 12 }}
-                        >
+                        <button onClick={() => incCounterWin(c.id)} disabled={busy} style={{ padding: "8px 10px", borderRadius: 12 }}>
                           +1
                         </button>
-                        <button
-                          onClick={() => deleteCounter(c.id)}
-                          disabled={busy}
-                          style={{ padding: "8px 10px", borderRadius: 12 }}
-                        >
+                        <button onClick={() => deleteCounter(c.id)} disabled={busy} style={{ padding: "8px 10px", borderRadius: 12 }}>
                           🗑️
                         </button>
                       </div>
@@ -372,35 +349,21 @@ export default function Offenses({ activeDefenseId, setActiveDefenseId }) {
         <h2 style={{ marginTop: 0 }}>Ajouter une offense</h2>
 
         <div style={{ display: "grid", gap: 12 }}>
-          <CharacterPicker label="Perso 1" valueId={a1} onChangeId={setA1} characters={characters} />
-          <CharacterPicker label="Perso 2" valueId={a2} onChangeId={setA2} characters={characters} />
-          <CharacterPicker label="Perso 3" valueId={a3} onChangeId={setA3} characters={characters} />
+          <CharacterAutocomplete label="Perso 1" valueId={a1} onChangeId={setA1} characters={characters} />
+          <CharacterAutocomplete label="Perso 2" valueId={a2} onChangeId={setA2} characters={characters} />
+          <CharacterAutocomplete label="Perso 3" valueId={a3} onChangeId={setA3} characters={characters} />
 
           <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
             <div style={{ fontWeight: 700 }}>Victoires</div>
-            <input
-              type="number"
-              value={wins}
-              onChange={(e) => setWins(e.target.value)}
-              style={{ width: 140, padding: 8, borderRadius: 10 }}
-            />
+            <input type="number" value={wins} onChange={(e) => setWins(e.target.value)} style={{ width: 140, padding: 8, borderRadius: 10 }} />
           </div>
 
           <div>
             <div style={{ fontWeight: 700, marginBottom: 6 }}>Note offense</div>
-            <textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              rows={4}
-              style={{ width: "100%", padding: 10, borderRadius: 12 }}
-            />
+            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={4} style={{ width: "100%", padding: 10, borderRadius: 12 }} />
           </div>
 
-          <button
-            onClick={saveCounter}
-            disabled={busy}
-            style={{ padding: "12px 14px", borderRadius: 12, fontWeight: 900 }}
-          >
+          <button onClick={saveCounter} disabled={busy} style={{ padding: "12px 14px", borderRadius: 12, fontWeight: 900 }}>
             {busy ? "..." : "Enregistrer offense"}
           </button>
 

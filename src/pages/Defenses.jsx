@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { teamKeyFromIds } from "../lib/keys";
 import UploadCharacters from "../ui/UploadCharacters";
-import CharacterPicker from "../ui/CharacterPicker";
+import CharacterAutocomplete from "../ui/CharacterAutocomplete";
 import DefenseCard from "../ui/DefenseCard";
 
 async function loadCharacters() {
@@ -69,13 +69,12 @@ export default function Defenses({ activeDefenseId, setActiveDefenseId }) {
   const [wins, setWins] = useState(0);
   const [notes, setNotes] = useState("");
 
-  async function refreshAll() {
+  async function refreshAll({ keepSelection = true } = {}) {
     const [cs, ds] = await Promise.all([loadCharacters(), loadDefenses()]);
     setCharacters(cs);
     setDefenses(ds);
 
-    // keep selection fresh
-    if (selected?.id) {
+    if (keepSelection && selected?.id) {
       const fresh = ds.find((x) => x.id === selected.id) || null;
       setSelected(fresh);
       if (fresh) loadIntoEditor(fresh);
@@ -140,6 +139,7 @@ export default function Defenses({ activeDefenseId, setActiveDefenseId }) {
 
   async function saveDefense() {
     if (!d1 || !d2 || !d3) return alert("Choisis 3 persos.");
+    if (d1 === d2 || d1 === d3 || d2 === d3) return alert("3 persos différents 🙂");
 
     setBusy(true);
     try {
@@ -160,13 +160,15 @@ export default function Defenses({ activeDefenseId, setActiveDefenseId }) {
       const { error } = await supabase.from("defenses").upsert(payload, { onConflict: "defense_key" });
       if (error) return alert(error.message);
 
-      await refreshAll();
-
-      // reselect
+      // refresh and reselect
       const ds = await loadDefenses();
-      const re = ds.find((x) => x.defense_key === defense_key) || null;
       setDefenses(ds);
+      const re = ds.find((x) => x.defense_key === defense_key) || null;
       if (re) loadIntoEditor(re);
+
+      // also refresh characters once (in case new uploads happened)
+      const cs = await loadCharacters();
+      setCharacters(cs);
     } catch (e) {
       alert(e.message);
     } finally {
@@ -186,7 +188,7 @@ export default function Defenses({ activeDefenseId, setActiveDefenseId }) {
 
       if (activeDefenseId === selected.id) setActiveDefenseId(null);
       clearEditor();
-      await refreshAll();
+      await refreshAll({ keepSelection: false });
     } catch (e) {
       alert(e.message);
     } finally {
@@ -194,26 +196,17 @@ export default function Defenses({ activeDefenseId, setActiveDefenseId }) {
     }
   }
 
-  // +1 win defense (atomic)
   async function incSelectedDefenseWin() {
     if (!selected) return;
+
     setBusy(true);
     try {
-      const { data, error } = await supabase
-        .from("defenses")
-        .select("wins")
-        .eq("id", selected.id)
-        .single();
+      // small, robust approach (works even without RPC)
+      const current = Number(selected.wins || 0);
+      const next = current + 1;
 
+      const { error } = await supabase.from("defenses").update({ wins: next }).eq("id", selected.id);
       if (error) return alert(error.message);
-
-      const next = Number(data?.wins || 0) + 1;
-      const { error: upErr } = await supabase
-        .from("defenses")
-        .update({ wins: next })
-        .eq("id", selected.id);
-
-      if (upErr) return alert(upErr.message);
 
       setWins(next);
       await refreshAll();
@@ -228,7 +221,7 @@ export default function Defenses({ activeDefenseId, setActiveDefenseId }) {
     <div style={{ display: "grid", gridTemplateColumns: "420px 1fr", gap: 14 }}>
       {/* LEFT */}
       <div style={{ display: "grid", gap: 12 }}>
-        <UploadCharacters onDone={refreshAll} />
+        <UploadCharacters onDone={() => refreshAll().catch((e) => alert(e.message))} />
 
         <div style={{ display: "flex", gap: 10 }}>
           <input
@@ -249,7 +242,7 @@ export default function Defenses({ activeDefenseId, setActiveDefenseId }) {
           {filtered.map((d) => (
             <div key={d.id} style={{ display: "grid", gap: 8 }}>
               <DefenseCard defense={d} onSelect={loadIntoEditor} />
-              <div style={{ display: "flex", gap: 8 }}>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <button
                   onClick={() => {
                     loadIntoEditor(d);
@@ -262,11 +255,20 @@ export default function Defenses({ activeDefenseId, setActiveDefenseId }) {
                 <button
                   onClick={() => {
                     loadIntoEditor(d);
+                    setTimeout(() => incSelectedDefenseWin(), 0);
+                  }}
+                  style={{ padding: "8px 10px", borderRadius: 12 }}
+                >
+                  +1
+                </button>
+                <button
+                  onClick={() => {
+                    loadIntoEditor(d);
                     setTimeout(() => deleteSelectedDefense(), 0);
                   }}
                   style={{ padding: "8px 10px", borderRadius: 12 }}
                 >
-                  🗑️ Supprimer
+                  🗑️
                 </button>
               </div>
             </div>
@@ -278,7 +280,7 @@ export default function Defenses({ activeDefenseId, setActiveDefenseId }) {
       <div style={{ padding: 14, border: "1px solid #ddd", borderRadius: 16, background: "#fafafa" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
           <h2 style={{ margin: 0 }}>Défense</h2>
-          <div style={{ display: "flex", gap: 10 }}>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <button onClick={clearEditor} style={{ padding: "10px 12px", borderRadius: 12 }} disabled={busy}>
               Nouvelle
             </button>
@@ -293,6 +295,14 @@ export default function Defenses({ activeDefenseId, setActiveDefenseId }) {
 
             <button
               disabled={!selected || busy}
+              onClick={incSelectedDefenseWin}
+              style={{ padding: "10px 12px", borderRadius: 12 }}
+            >
+              +1 victoire
+            </button>
+
+            <button
+              disabled={!selected || busy}
               onClick={deleteSelectedDefense}
               style={{ padding: "10px 12px", borderRadius: 12 }}
             >
@@ -303,7 +313,7 @@ export default function Defenses({ activeDefenseId, setActiveDefenseId }) {
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginTop: 12 }}>
           <div>
-            <CharacterPicker label="Perso 1" valueId={d1} onChangeId={setD1} characters={characters} />
+            <CharacterAutocomplete label="Perso 1" valueId={d1} onChangeId={setD1} characters={characters} />
             <input
               value={d1n}
               onChange={(e) => setD1n(e.target.value)}
@@ -312,7 +322,7 @@ export default function Defenses({ activeDefenseId, setActiveDefenseId }) {
             />
           </div>
           <div>
-            <CharacterPicker label="Perso 2" valueId={d2} onChangeId={setD2} characters={characters} />
+            <CharacterAutocomplete label="Perso 2" valueId={d2} onChangeId={setD2} characters={characters} />
             <input
               value={d2n}
               onChange={(e) => setD2n(e.target.value)}
@@ -321,7 +331,7 @@ export default function Defenses({ activeDefenseId, setActiveDefenseId }) {
             />
           </div>
           <div>
-            <CharacterPicker label="Perso 3" valueId={d3} onChangeId={setD3} characters={characters} />
+            <CharacterAutocomplete label="Perso 3" valueId={d3} onChangeId={setD3} characters={characters} />
             <input
               value={d3n}
               onChange={(e) => setD3n(e.target.value)}
@@ -339,13 +349,9 @@ export default function Defenses({ activeDefenseId, setActiveDefenseId }) {
             onChange={(e) => setWins(e.target.value)}
             style={{ width: 140, padding: 8, borderRadius: 10 }}
           />
-          <button
-            disabled={!selected || busy}
-            onClick={incSelectedDefenseWin}
-            style={{ padding: "8px 10px", borderRadius: 12 }}
-          >
-            +1 victoire
-          </button>
+          <div style={{ opacity: 0.7, fontSize: 12 }}>
+            (Tu peux aussi cliquer “+1 victoire” à droite.)
+          </div>
         </div>
 
         <div style={{ marginTop: 12 }}>
