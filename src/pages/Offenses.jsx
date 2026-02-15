@@ -6,6 +6,7 @@ import CharacterAutocomplete from "../ui/CharacterAutocomplete";
 async function loadCharacters() {
   const { data, error } = await supabase.from("characters").select("*").order("name");
   if (error) throw error;
+
   return data.map((row) => ({
     ...row,
     image_url: row.image_path
@@ -88,20 +89,43 @@ async function loadCounters(defenseId) {
   }));
 }
 
+function Img({ src, alt, size = 34 }) {
+  return (
+    <div
+      style={{
+        width: size,
+        height: size,
+        borderRadius: 10,
+        overflow: "hidden",
+        background: "#f2f2f2",
+        flex: "0 0 auto",
+      }}
+    >
+      {src ? <img src={src} alt={alt} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : null}
+    </div>
+  );
+}
+
 export default function Offenses({ activeDefenseId, setActiveDefenseId }) {
   const [characters, setCharacters] = useState([]);
   const [defenses, setDefenses] = useState([]);
-  const [filter, setFilter] = useState("");
-  const [sort, setSort] = useState("wins_desc");
   const [counters, setCounters] = useState([]);
-  const [busy, setBusy] = useState(false);
 
-  // add counter editor
+  // left filters
+  const [filterText, setFilterText] = useState("");
+  const [sort, setSort] = useState("wins_desc");
+  const [df1, setDf1] = useState(null);
+  const [df2, setDf2] = useState(null);
+  const [df3, setDf3] = useState(null);
+
+  // add offense editor (right)
   const [a1, setA1] = useState(null);
   const [a2, setA2] = useState(null);
   const [a3, setA3] = useState(null);
-  const [wins, setWins] = useState(0);
-  const [notes, setNotes] = useState("");
+  const [owins, setOwins] = useState(0);
+  const [onotes, setOnotes] = useState("");
+
+  const [busy, setBusy] = useState(false);
 
   async function refreshAll() {
     const [cs, ds] = await Promise.all([loadCharacters(), loadDefenses()]);
@@ -127,19 +151,37 @@ export default function Offenses({ activeDefenseId, setActiveDefenseId }) {
     [defenses, activeDefenseId]
   );
 
+  function resetDefenseSearch() {
+    setFilterText("");
+    setDf1(null);
+    setDf2(null);
+    setDf3(null);
+  }
+
   const filteredDefenses = useMemo(() => {
-    const f = filter.trim().toLowerCase();
     let rows = defenses;
 
-    if (f) {
-      rows = rows.filter(
-        (d) =>
-          d.d1?.name?.toLowerCase().startsWith(f) ||
-          d.d2?.name?.toLowerCase().startsWith(f) ||
-          d.d3?.name?.toLowerCase().startsWith(f)
-      );
+    // optional text filter
+    const t = filterText.trim().toLowerCase();
+    if (t) {
+      rows = rows.filter((d) => {
+        const n1 = (d.d1?.name || "").toLowerCase();
+        const n2 = (d.d2?.name || "").toLowerCase();
+        const n3 = (d.d3?.name || "").toLowerCase();
+        return n1.startsWith(t) || n2.startsWith(t) || n3.startsWith(t);
+      });
     }
 
+    // orderless 2–3 character filter
+    const wanted = [df1, df2, df3].filter(Boolean);
+    if (wanted.length) {
+      rows = rows.filter((d) => {
+        const set = new Set([d.d1?.id, d.d2?.id, d.d3?.id].filter(Boolean));
+        return wanted.every((id) => set.has(id));
+      });
+    }
+
+    // sort
     if (sort === "wins_desc") rows = [...rows].sort((a, b) => (b.wins ?? 0) - (a.wins ?? 0));
     if (sort === "wins_asc") rows = [...rows].sort((a, b) => (a.wins ?? 0) - (b.wins ?? 0));
     if (sort === "name_asc")
@@ -148,7 +190,7 @@ export default function Offenses({ activeDefenseId, setActiveDefenseId }) {
       );
 
     return rows;
-  }, [defenses, filter, sort]);
+  }, [defenses, filterText, sort, df1, df2, df3]);
 
   async function saveCounter() {
     if (!activeDefenseId) return alert("Sélectionne une défense.");
@@ -165,21 +207,21 @@ export default function Offenses({ activeDefenseId, setActiveDefenseId }) {
         a1_id: a1,
         a2_id: a2,
         a3_id: a3,
-        wins: Number(wins || 0),
-        notes,
+        wins: Number(owins || 0),
+        notes: onotes,
       };
 
       const { error } = await supabase.from("counters").upsert(payload, {
         onConflict: "defense_id,attack_key",
       });
-
       if (error) return alert(error.message);
 
+      // reset form
       setA1(null);
       setA2(null);
       setA3(null);
-      setWins(0);
-      setNotes("");
+      setOwins(0);
+      setOnotes("");
 
       await refreshCounters();
     } catch (e) {
@@ -191,6 +233,7 @@ export default function Offenses({ activeDefenseId, setActiveDefenseId }) {
 
   async function deleteCounter(counterId) {
     if (!confirm("Supprimer cette offense ?")) return;
+
     setBusy(true);
     try {
       const { error } = await supabase.from("counters").delete().eq("id", counterId);
@@ -207,8 +250,7 @@ export default function Offenses({ activeDefenseId, setActiveDefenseId }) {
     setBusy(true);
     try {
       const row = counters.find((x) => x.id === counterId);
-      const current = Number(row?.wins || 0);
-      const next = current + 1;
+      const next = Number(row?.wins || 0) + 1;
 
       const { error } = await supabase.from("counters").update({ wins: next }).eq("id", counterId);
       if (error) return alert(error.message);
@@ -222,48 +264,78 @@ export default function Offenses({ activeDefenseId, setActiveDefenseId }) {
   }
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "380px 1fr 420px", gap: 14 }}>
-      {/* LEFT: defenses list */}
-      <div style={{ display: "grid", gap: 10 }}>
-        <div style={{ display: "flex", gap: 10 }}>
-          <input
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            placeholder="Recherche défense (début perso)…"
-            style={{ flex: 1, padding: 10, borderRadius: 12 }}
-          />
-          <select value={sort} onChange={(e) => setSort(e.target.value)} style={{ padding: 10, borderRadius: 12 }}>
-            <option value="wins_desc">Victoires ↓</option>
-            <option value="wins_asc">Victoires ↑</option>
-            <option value="name_asc">Nom A→Z</option>
-          </select>
+    <div style={{ display: "grid", gridTemplateColumns: "420px 1fr 420px", gap: 14 }}>
+      {/* LEFT: defense search + list */}
+      <div style={{ display: "grid", gap: 12 }}>
+        <div style={{ padding: 12, border: "1px solid #ddd", borderRadius: 16, background: "white" }}>
+          <div style={{ fontWeight: 900, marginBottom: 10 }}>Recherche défense (2–3 persos)</div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr) minmax(0,1fr)", gap: 10 }}>
+            <CharacterAutocomplete label="Perso A" valueId={df1} onChangeId={setDf1} characters={characters} />
+            <CharacterAutocomplete label="Perso B" valueId={df2} onChangeId={setDf2} characters={characters} />
+            <CharacterAutocomplete label="Perso C" valueId={df3} onChangeId={setDf3} characters={characters} />
+          </div>
+
+          <div style={{ display: "flex", gap: 10, marginTop: 10, flexWrap: "wrap" }}>
+            <button onClick={resetDefenseSearch} style={{ padding: "8px 10px", borderRadius: 12 }}>
+              Réinitialiser
+            </button>
+
+            <select value={sort} onChange={(e) => setSort(e.target.value)} style={{ padding: 10, borderRadius: 12 }}>
+              <option value="wins_desc">Victoires ↓</option>
+              <option value="wins_asc">Victoires ↑</option>
+              <option value="name_asc">Nom A→Z</option>
+            </select>
+          </div>
+
+          <div style={{ marginTop: 10 }}>
+            <input
+              value={filterText}
+              onChange={(e) => setFilterText(e.target.value)}
+              placeholder="(Option) filtre texte…"
+              style={{ width: "100%", padding: 10, borderRadius: 12 }}
+            />
+          </div>
         </div>
 
-        <div style={{ display: "grid", gap: 10, maxHeight: "75vh", overflow: "auto" }}>
+        <div style={{ display: "grid", gap: 10, maxHeight: "72vh", overflow: "auto" }}>
           {filteredDefenses.map((d) => (
             <button
               key={d.id}
               onClick={() => setActiveDefenseId(d.id)}
               style={{
+                width: "100%",
+                textAlign: "left",
                 padding: 12,
                 borderRadius: 14,
                 border: "1px solid #ddd",
                 background: activeDefenseId === d.id ? "#f0f7ff" : "white",
                 cursor: "pointer",
-                textAlign: "left",
               }}
             >
               <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-                <div style={{ fontWeight: 800 }}>
-                  {d.d1?.name} / {d.d2?.name} / {d.d3?.name}
+                <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                  <Img src={d.d1?.image_url} alt={d.d1?.name} />
+                  <Img src={d.d2?.image_url} alt={d.d2?.name} />
+                  <Img src={d.d3?.image_url} alt={d.d3?.name} />
+                  <div style={{ fontWeight: 800 }}>
+                    {d.d1?.name} / {d.d2?.name} / {d.d3?.name}
+                  </div>
                 </div>
-                <div style={{ fontWeight: 800 }}>{d.wins}</div>
+                <div style={{ fontWeight: 800 }}>{d.wins ?? 0}</div>
               </div>
+
               <div style={{ fontSize: 12, opacity: 0.75, marginTop: 6 }}>
                 {d.d1_note || "—"} · {d.d2_note || "—"} · {d.d3_note || "—"}
               </div>
             </button>
           ))}
+
+          {!filteredDefenses.length ? (
+            <div style={{ padding: 14, borderRadius: 14, background: "#fff", border: "1px dashed #ddd", opacity: 0.8 }}>
+              Aucun résultat.
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -274,20 +346,15 @@ export default function Offenses({ activeDefenseId, setActiveDefenseId }) {
         {activeDefense ? (
           <>
             <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-              {[activeDefense.d1, activeDefense.d2, activeDefense.d3].map((p) => (
-                <div
-                  key={p.id}
-                  style={{ width: 56, height: 56, borderRadius: 14, overflow: "hidden", background: "#eee" }}
-                >
-                  {p.image_url ? (
-                    <img src={p.image_url} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                  ) : null}
-                </div>
-              ))}
+              <Img src={activeDefense.d1?.image_url} alt={activeDefense.d1?.name} size={56} />
+              <Img src={activeDefense.d2?.image_url} alt={activeDefense.d2?.name} size={56} />
+              <Img src={activeDefense.d3?.image_url} alt={activeDefense.d3?.name} size={56} />
+
               <div style={{ fontWeight: 900, fontSize: 18 }}>
                 {activeDefense.d1?.name} / {activeDefense.d2?.name} / {activeDefense.d3?.name}
               </div>
-              <div style={{ marginLeft: "auto", fontWeight: 900 }}>Victoires: {activeDefense.wins}</div>
+
+              <div style={{ marginLeft: "auto", fontWeight: 900 }}>Victoires: {activeDefense.wins ?? 0}</div>
             </div>
 
             <div style={{ marginTop: 10, opacity: 0.8 }}>
@@ -306,28 +373,39 @@ export default function Offenses({ activeDefenseId, setActiveDefenseId }) {
                 {counters.map((c) => (
                   <div
                     key={c.id}
-                    style={{ padding: 12, border: "1px solid #e3e3e3", borderRadius: 14, background: "white" }}
+                    style={{
+                      padding: 12,
+                      border: "1px solid #e3e3e3",
+                      borderRadius: 14,
+                      background: "white",
+                    }}
                   >
                     <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
                       <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-                        {[c.a1, c.a2, c.a3].map((p) => (
-                          <div key={p.id} style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                            <div style={{ width: 34, height: 34, borderRadius: 10, overflow: "hidden", background: "#f2f2f2" }}>
-                              {p.image_url ? (
-                                <img src={p.image_url} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                              ) : null}
-                            </div>
-                            <div style={{ fontWeight: 700, fontSize: 13 }}>{p.name}</div>
-                          </div>
-                        ))}
+                        <Img src={c.a1?.image_url} alt={c.a1?.name} />
+                        <div style={{ fontWeight: 800 }}>{c.a1?.name}</div>
+
+                        <Img src={c.a2?.image_url} alt={c.a2?.name} />
+                        <div style={{ fontWeight: 800 }}>{c.a2?.name}</div>
+
+                        <Img src={c.a3?.image_url} alt={c.a3?.name} />
+                        <div style={{ fontWeight: 800 }}>{c.a3?.name}</div>
                       </div>
 
                       <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                        <div style={{ fontWeight: 800 }}>{c.wins}</div>
-                        <button onClick={() => incCounterWin(c.id)} disabled={busy} style={{ padding: "8px 10px", borderRadius: 12 }}>
+                        <div style={{ fontWeight: 900 }}>{c.wins ?? 0}</div>
+                        <button
+                          onClick={() => incCounterWin(c.id)}
+                          disabled={busy}
+                          style={{ padding: "8px 10px", borderRadius: 12 }}
+                        >
                           +1
                         </button>
-                        <button onClick={() => deleteCounter(c.id)} disabled={busy} style={{ padding: "8px 10px", borderRadius: 12 }}>
+                        <button
+                          onClick={() => deleteCounter(c.id)}
+                          disabled={busy}
+                          style={{ padding: "8px 10px", borderRadius: 12 }}
+                        >
                           🗑️
                         </button>
                       </div>
@@ -344,8 +422,8 @@ export default function Offenses({ activeDefenseId, setActiveDefenseId }) {
         )}
       </div>
 
-      {/* RIGHT: add counter */}
-      <div style={{ padding: 14, border: "1px solid #ddd", borderRadius: 16, background: "#fff" }}>
+      {/* RIGHT: add offense */}
+      <div style={{ padding: 14, border: "1px solid #ddd", borderRadius: 16, background: "white" }}>
         <h2 style={{ marginTop: 0 }}>Ajouter une offense</h2>
 
         <div style={{ display: "grid", gap: 12 }}>
@@ -355,20 +433,34 @@ export default function Offenses({ activeDefenseId, setActiveDefenseId }) {
 
           <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
             <div style={{ fontWeight: 700 }}>Victoires</div>
-            <input type="number" value={wins} onChange={(e) => setWins(e.target.value)} style={{ width: 140, padding: 8, borderRadius: 10 }} />
+            <input
+              type="number"
+              value={owins}
+              onChange={(e) => setOwins(e.target.value)}
+              style={{ width: 140, padding: 8, borderRadius: 10 }}
+            />
           </div>
 
           <div>
             <div style={{ fontWeight: 700, marginBottom: 6 }}>Note offense</div>
-            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={4} style={{ width: "100%", padding: 10, borderRadius: 12 }} />
+            <textarea
+              value={onotes}
+              onChange={(e) => setOnotes(e.target.value)}
+              rows={4}
+              style={{ width: "100%", padding: 10, borderRadius: 12 }}
+            />
           </div>
 
-          <button onClick={saveCounter} disabled={busy} style={{ padding: "12px 14px", borderRadius: 12, fontWeight: 900 }}>
+          <button
+            onClick={saveCounter}
+            disabled={busy}
+            style={{ padding: "12px 14px", borderRadius: 12, fontWeight: 900 }}
+          >
             {busy ? "..." : "Enregistrer offense"}
           </button>
 
           <div style={{ opacity: 0.7, fontSize: 12 }}>
-            Astuce: sélectionne une défense à gauche puis ajoute des offenses gagnantes ici.
+            Astuce: choisis la défense à gauche puis ajoute les teams qui passent.
           </div>
         </div>
       </div>
